@@ -1,0 +1,8 @@
+.travel {
+  background-image: url("/Front_end/my-app/public/back_food.jpg"); /* Ensure the correct path */
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  min-height: 100vh; /* Full page height */
+  padding: 20px;
+}
