@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useBlogs } from "../context/BlogContext";
 import { useAuth } from "../context/AuthContext";
@@ -8,7 +8,6 @@ function Comments() {
   const { blogs } = useBlogs();
   const { currentUser, openAuthModal } = useAuth();
 
-  // Community guestbook comments in localStorage
   const [communityComments, setCommunityComments] = useState(() => {
     try {
       const stored = localStorage.getItem("horizon_community_comments");
@@ -38,7 +37,23 @@ function Comments() {
   const [name, setName] = useState(currentUser ? currentUser.name : "");
   const [message, setMessage] = useState("");
 
-  const handleSubmit = (e) => {
+  // Load community comments from database
+  useEffect(() => {
+    async function loadCommunityComments() {
+      try {
+        const res = await fetch("/api/comments?type=community");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setCommunityComments(data);
+          }
+        }
+      } catch (err) {}
+    }
+    loadCommunityComments();
+  }, []);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!message.trim()) return;
 
@@ -59,6 +74,20 @@ function Comments() {
     setCommunityComments(updated);
     try {
       localStorage.setItem("horizon_community_comments", JSON.stringify(updated));
+    } catch (err) {}
+
+    // Send to database
+    try {
+      await fetch("/api/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "community",
+          name: author,
+          avatar,
+          message: message.trim()
+        })
+      });
     } catch (err) {}
 
     setMessage("");

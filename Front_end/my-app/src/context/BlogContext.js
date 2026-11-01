@@ -22,12 +22,37 @@ export const BlogProvider = ({ children }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
 
+  // Fetch blogs from PostgreSQL backend on initial load
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchBlogsFromBackend() {
+      try {
+        const res = await fetch("/api/blogs");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0 && isMounted) {
+            setBlogs(data);
+            try {
+              localStorage.setItem("horizon_blogs", JSON.stringify(data));
+            } catch (err) {}
+          }
+        }
+      } catch (err) {
+        // Backend not reachable, continue with local cache
+        console.info("Using local blog data (Vercel backend will connect when deployed).");
+      }
+    }
+    fetchBlogsFromBackend();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Save to local cache
   useEffect(() => {
     try {
       localStorage.setItem("horizon_blogs", JSON.stringify(blogs));
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) {}
   }, [blogs]);
 
   const getBlogById = (id) => {
@@ -35,10 +60,10 @@ export const BlogProvider = ({ children }) => {
     return blogs.find((b) => b.id === numericId || b.id === id);
   };
 
-  const addBlog = (blogData) => {
-    const newId = Date.now();
-    const newPost = {
-      id: newId,
+  const addBlog = async (blogData) => {
+    const localId = Date.now();
+    const tempPost = {
+      id: localId,
       title: blogData.title,
       category: blogData.category || "General",
       image: blogData.image || "home1.jpg",
@@ -54,11 +79,30 @@ export const BlogProvider = ({ children }) => {
       comments: []
     };
 
-    setBlogs((prev) => [newPost, ...prev]);
-    return newPost;
+    // Optimistic UI update
+    setBlogs((prev) => [tempPost, ...prev]);
+
+    // Send to Vercel PostgreSQL backend
+    try {
+      const res = await fetch("/api/blogs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(blogData)
+      });
+      if (res.ok) {
+        const created = await res.json();
+        // Replace temp post with DB post containing proper DB id
+        setBlogs((prev) => prev.map((b) => (b.id === localId ? { ...created, comments: [] } : b)));
+        return created;
+      }
+    } catch (err) {
+      console.warn("Failed to persist blog to backend database, saved locally:", err);
+    }
+
+    return tempPost;
   };
 
-  const addComment = (blogId, commentData) => {
+  const addComment = async (blogId, commentData) => {
     const numericId = parseInt(blogId, 10);
     const newComment = {
       id: "comment-" + Date.now(),
@@ -68,6 +112,7 @@ export const BlogProvider = ({ children }) => {
       date: new Date().toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })
     };
 
+    // Optimistic update
     setBlogs((prev) =>
       prev.map((b) => {
         if (b.id === numericId || b.id === blogId) {
@@ -80,10 +125,26 @@ export const BlogProvider = ({ children }) => {
       })
     );
 
+    // Sync with PostgreSQL backend
+    try {
+      await fetch("/api/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          blogId: numericId,
+          name: commentData.name,
+          avatar: commentData.avatar,
+          text: commentData.text
+        })
+      });
+    } catch (err) {
+      console.warn("Failed to persist comment to DB:", err);
+    }
+
     return newComment;
   };
 
-  const toggleLike = (blogId, userIdentifier) => {
+  const toggleLike = async (blogId, userIdentifier) => {
     const numericId = parseInt(blogId, 10);
     setBlogs((prev) =>
       prev.map((b) => {
@@ -107,14 +168,26 @@ export const BlogProvider = ({ children }) => {
         return b;
       })
     );
+
+    // Sync with PostgreSQL backend
+    try {
+      await fetch("/api/blogs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: numericId, userIdentifier })
+      });
+    } catch (err) {}
   };
 
-  const deleteBlog = (blogId) => {
+  const deleteBlog = async (blogId) => {
     const numericId = parseInt(blogId, 10);
     setBlogs((prev) => prev.filter((b) => b.id !== numericId && b.id !== blogId));
+
+    try {
+      await fetch(`/api/blogs?id=${numericId}`, { method: "DELETE" });
+    } catch (err) {}
   };
 
-  // Dynamically collect all categories
   const categories = [
     "All",
     "Home",

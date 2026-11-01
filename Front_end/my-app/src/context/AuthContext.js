@@ -11,15 +11,6 @@ const DEFAULT_USERS = [
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
     bio: "Passionate writer, photographer & globetrotter.",
     joinedDate: "October 2024"
-  },
-  {
-    id: "user-2",
-    name: "Alex Morgan",
-    email: "alex@horizon.blog",
-    password: "password123",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
-    bio: "Culinary explorer and adventurer sharing journeys worldwide.",
-    joinedDate: "January 2025"
   }
 ];
 
@@ -43,14 +34,12 @@ export const AuthProvider = ({ children }) => {
   });
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState("login"); // "login" | "register"
+  const [authModalMode, setAuthModalMode] = useState("login");
 
   useEffect(() => {
     try {
       localStorage.setItem("horizon_users", JSON.stringify(users));
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) {}
   }, [users]);
 
   useEffect(() => {
@@ -60,13 +49,36 @@ export const AuthProvider = ({ children }) => {
       } else {
         localStorage.removeItem("horizon_current_user");
       }
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) {}
   }, [currentUser]);
 
-  const login = (email, password) => {
+  const login = async (email, password) => {
     const trimmedEmail = email.trim().toLowerCase();
+
+    // Try Vercel PostgreSQL Backend first
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "login", email: trimmedEmail, password })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user) {
+          setCurrentUser(data.user);
+          setIsAuthModalOpen(false);
+          return { success: true };
+        }
+      } else if (res.status === 401 || res.status === 400) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, message: errData.error || "Invalid email or password." };
+      }
+    } catch (apiErr) {
+      console.warn("Backend API not reachable, falling back to local session:", apiErr.message);
+    }
+
+    // Fallback to local accounts if database is not reachable / local dev
     const user = users.find(
       (u) => u.email.toLowerCase() === trimmedEmail && u.password === password
     );
@@ -80,10 +92,48 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const register = ({ name, email, password, avatar, bio }) => {
+  const register = async ({ name, email, password, avatar, bio }) => {
     const trimmedEmail = email.trim().toLowerCase();
-    const existing = users.find((u) => u.email.toLowerCase() === trimmedEmail);
+    const userAvatar =
+      avatar ||
+      `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(name.trim())}`;
+    const userBio = bio || "New contributor on Blog Horizon.";
 
+    // Try Vercel PostgreSQL Backend first
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "register",
+          name: name.trim(),
+          email: trimmedEmail,
+          password,
+          avatar: userAvatar,
+          bio: userBio
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user) {
+          setCurrentUser(data.user);
+          setIsAuthModalOpen(false);
+          return { success: true };
+        }
+      } else if (res.status === 409 || res.status === 400) {
+        const errData = await res.json().catch(() => ({}));
+        return {
+          success: false,
+          message: errData.error || "An account with this email already exists."
+        };
+      }
+    } catch (apiErr) {
+      console.warn("Backend API not reachable, falling back to local storage:", apiErr.message);
+    }
+
+    // Fallback to local accounts
+    const existing = users.find((u) => u.email.toLowerCase() === trimmedEmail);
     if (existing) {
       return { success: false, message: "An account with this email already exists." };
     }
@@ -93,8 +143,8 @@ export const AuthProvider = ({ children }) => {
       name: name.trim(),
       email: trimmedEmail,
       password,
-      avatar: avatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(name.trim())}`,
-      bio: bio || "New contributor on Blog Horizon.",
+      avatar: userAvatar,
+      bio: userBio,
       joinedDate: new Date().toLocaleDateString("en-US", { month: "short", year: "numeric" })
     };
 
